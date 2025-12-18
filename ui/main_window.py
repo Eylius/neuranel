@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from datetime import datetime
 from getpass import getuser
 from pathlib import Path
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets, QtNetwork
 
 from config import BASE_DIR, DEFAULT_PRESETS, PROJECT_MANAGER_VERSION, SUITE_VERSION, load_config, save_config
 from storage import list_projects, load_loans, save_loans
@@ -17,6 +18,8 @@ from ui.widgets import ProjectCard, ProjectItem, TitleBar
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    UPDATE_URL = "https://raw.githubusercontent.com/Eylius/neuranel/main/updates/version.json"
+
     def __init__(self, splash: QtWidgets.QSplashScreen | None = None) -> None:
         super().__init__()
         self._startup_splash = splash
@@ -57,6 +60,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_shared: list[str] | None = None
         self._last_local: list[str] | None = None
         self._nav_anim: QtCore.QPropertyAnimation | None = None
+        self._update_check_manager: QtNetwork.QNetworkAccessManager | None = None
+        self._update_download_manager: QtNetwork.QNetworkAccessManager | None = None
+        self._update_download_reply: QtNetwork.QNetworkReply | None = None
+        self._update_progress: QtWidgets.QProgressDialog | None = None
 
         self._ensure_config()
         # Sync theme after setup; setup may have updated config.
@@ -227,6 +234,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._nav_ignore_enter = False
         QtCore.QTimer.singleShot(0, self._init_nav_collapsed)
         QtCore.QTimer.singleShot(350, self._maybe_show_project_manager_onboarding)
+        QtCore.QTimer.singleShot(600, self._maybe_show_pending_changelog)
+        QtCore.QTimer.singleShot(900, self._check_for_updates)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -265,6 +274,183 @@ class MainWindow(QtWidgets.QMainWindow):
     def _maybe_show_project_manager_onboarding(self) -> None:
         # Nur automatisch anzeigen, wenn Onboarding-Flag noch nicht gesetzt ist.
         self._start_project_manager_onboarding(force=False)
+
+    def _maybe_show_pending_changelog(self) -> None:
+        pending_version = self.config.get("pending_suite_version")
+        pending_text = self.config.get("pending_changelog")
+        current_version = self._suite_version
+
+        if pending_version and pending_text and pending_version == current_version:
+            self._show_changelog_dialog(pending_text)
+            self.config["last_seen_suite_version"] = current_version
+            self.config["pending_suite_version"] = ""
+            self.config["pending_changelog"] = ""
+            save_config(self.config)
+            return
+
+        if not self.config.get("last_seen_suite_version"):
+            self.config["last_seen_suite_version"] = current_version
+            save_config(self.config)
+
+    @staticmethod
+    def _parse_version(value: str) -> list[int]:
+        parts = []
+        number = ""
+        for ch in value:
+            if ch.isdigit():
+                number += ch
+            elif number:
+                parts.append(int(number))
+                number = ""
+        if number:
+            parts.append(int(number))
+        return parts or [0]
+
+    @classmethod
+    def _is_newer_version(cls, current: str, candidate: str) -> bool:
+        left = cls._parse_version(current)
+        right = cls._parse_version(candidate)
+        max_len = max(len(left), len(right))
+        left.extend([0] * (max_len - len(left)))
+        right.extend([0] * (max_len - len(right)))
+        return right > left
+
+    def _check_for_updates(self) -> None:
+        if not self.UPDATE_URL:
+            return
+        if self._update_check_manager is None:
+            self._update_check_manager = QtNetwork.QNetworkAccessManager(self)
+        req = QtNetwork.QNetworkRequest(QtCore.QUrl(self.UPDATE_URL))
+        req.setHeader(QtNetwork.QNetworkRequest.UserAgentHeader, "Neuranel-Updater")
+        reply = self._update_check_manager.get(req)
+        reply.finished.connect(lambda: self._handle_update_check(reply))
+
+    def _handle_update_check(self, reply: QtNetwork.QNetworkReply) -> None:
+        try:
+            if reply.error() != QtNetwork.QNetworkReply.NoError:
+                return
+            payload = bytes(reply.readAll()).decode("utf-8", errors="replace")
+            data = json.loads(payload)
+        except Exception:
+            return
+        finally:
+            reply.deleteLater()
+
+        if not isinstance(data, dict):
+            return
+        latest = str(data.get("suite_version") or "").strip()
+        if not latest:
+            return
+        if not self._is_newer_version(self._suite_version, latest):
+            return
+
+        info = {
+            "version": latest,
+            "changelog": str(data.get("changelog") or "").strip(),
+            "url": str(data.get("windows_url") or data.get("url") or "").strip(),
+        }
+        if not info["url"]:
+            return
+        self._show_update_prompt(info)
+
+    def _show_update_prompt(self, info: dict) -> None:
+        msg = QtWidgets.QMessageBox(self)
+        msg.setWindowTitle("Update verfügbar")
+        msg.setText(f"Eine neue Suite-Version ist verfügbar: {info['version']}")
+        msg.setInformativeText("Möchtest du das Update jetzt herunterladen und installieren?")
+        msg.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        msg.setDefaultButton(QtWidgets.QMessageBox.Yes)
+        msg.button(QtWidgets.QMessageBox.Yes).setText("Update")
+        msg.button(QtWidgets.QMessageBox.No).setText("Später")
+        msg.setStyleSheet(self._build_stylesheet(self._current_colors()))
+        result = msg.exec()
+        if result == QtWidgets.QMessageBox.Yes:
+            self._start_update_download(info)
+
+    def _start_update_download(self, info: dict) -> None:
+        if self._update_download_manager is None:
+            self._update_download_manager = QtNetwork.QNetworkAccessManager(self)
+        url = QtCore.QUrl(info["url"])
+        reply = self._update_download_manager.get(QtNetwork.QNetworkRequest(url))
+        self._update_download_reply = reply
+
+        progress = QtWidgets.QProgressDialog("Update wird heruntergeladen...", "Abbrechen", 0, 100, self)
+        progress.setWindowTitle("Update")
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setStyleSheet(self._build_stylesheet(self._current_colors()))
+        progress.canceled.connect(lambda: reply.abort())
+        self._update_progress = progress
+        progress.show()
+
+        reply.downloadProgress.connect(self._on_update_progress)
+        reply.finished.connect(lambda: self._finish_update_download(info, reply))
+
+    def _on_update_progress(self, received: int, total: int) -> None:
+        if not self._update_progress:
+            return
+        if total > 0:
+            pct = int(received * 100 / total)
+            self._update_progress.setValue(pct)
+        else:
+            self._update_progress.setRange(0, 0)
+
+    def _finish_update_download(self, info: dict, reply: QtNetwork.QNetworkReply) -> None:
+        if self._update_progress:
+            self._update_progress.hide()
+            self._update_progress.deleteLater()
+            self._update_progress = None
+        try:
+            if reply.error() != QtNetwork.QNetworkReply.NoError:
+                QtWidgets.QMessageBox.warning(
+                    self, "Update fehlgeschlagen", "Download fehlgeschlagen."
+                )
+                return
+            data = bytes(reply.readAll())
+            temp_dir = Path(tempfile.gettempdir())
+            filename = f"NeuranelUpdate_{info['version']}.exe"
+            target = temp_dir / filename
+            with target.open("wb") as f:
+                f.write(data)
+            self.config["pending_suite_version"] = info.get("version", "")
+            self.config["pending_changelog"] = info.get("changelog", "")
+            save_config(self.config)
+            QtCore.QProcess.startDetached(str(target))
+            QtWidgets.QApplication.instance().quit()
+        finally:
+            reply.deleteLater()
+
+    def _show_changelog_dialog(self, changelog: str) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Changelog")
+        dialog.setObjectName("background")
+        dialog.setModal(True)
+        dialog.setMinimumSize(520, 360)
+        dialog.setStyleSheet(self._build_stylesheet(self._current_colors()))
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        header = QtWidgets.QLabel("Changelog")
+        header.setObjectName("cardTitle")
+        layout.addWidget(header)
+
+        text = QtWidgets.QTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText(changelog)
+        text.setObjectName("card")
+        layout.addWidget(text, 1)
+
+        close_btn = QtWidgets.QPushButton("Schließen")
+        close_btn.setObjectName("primaryButton")
+        close_btn.clicked.connect(dialog.accept)
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dialog.exec()
 
     def _start_project_manager_onboarding(self, *, force: bool = False) -> None:
         if not hasattr(self, "shared_view") or not hasattr(self, "local_view"):

@@ -19,8 +19,8 @@ else:
 APPDATA_DIR = Path(os.getenv("LOCALAPPDATA", Path.home() / ".local" / "share"))
 CONFIG_DIR = APPDATA_DIR / "Neuranel"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-SUITE_VERSION = "dev/v0.0.1"
-PROJECT_MANAGER_VERSION = "dev/v0.0.1"
+SUITE_VERSION = "v0.1.1"
+PROJECT_MANAGER_VERSION = "v0.0.1"
 
 DEFAULT_PRESETS = {
     "dark": {
