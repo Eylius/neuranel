@@ -6,8 +6,20 @@ __pycache__/
 build/
 dist/
 
-local/
-shared/
 backups/
+common/
+local/
 
 exe generation.txt
+
+.vscode/
+.idea/
+*.log
+*.tmp
+*.bak
+.env
+.env.*
+*.sqlite
+*.db
+Thumbs.db
+Desktop.ini
