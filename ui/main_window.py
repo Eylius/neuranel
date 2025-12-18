@@ -105,7 +105,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.options_menu.setWindowFlag(QtCore.Qt.NoDropShadowWindowHint, True)
         self.options_menu.setProperty("menuRole", "top")
         self.options_menu.addAction("Settings", self._open_settings_dialog)
-        self.options_menu.addAction("About", self._show_about_dialog)
         self.options_btn.setMenu(self.options_menu)
         self.options_btn.installEventFilter(self)
         self.options_menu.setMouseTracking(True)
@@ -133,6 +132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._onboarding_action = self.help_menu.addMenu(self.onboarding_menu)
         self._onboarding_action.setText("Onboarding ˃")
+        self.help_menu.addAction("About", self._show_about_dialog)
         self.help_btn.setMenu(self.help_menu)
         self.help_btn.installEventFilter(self)
         self.help_menu.setMouseTracking(True)
@@ -293,7 +293,7 @@ class MainWindow(QtWidgets.QMainWindow):
         current_version = self._suite_version
 
         if pending_version and pending_text and pending_version == current_version:
-            self._show_changelog_dialog(pending_text)
+            self._show_update_success_dialog(current_version, pending_text)
             self.config["last_seen_suite_version"] = current_version
             self.config["pending_suite_version"] = ""
             self.config["pending_changelog"] = ""
@@ -303,6 +303,38 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.config.get("last_seen_suite_version"):
             self.config["last_seen_suite_version"] = current_version
             save_config(self.config)
+
+    def _show_update_success_dialog(self, version: str, changelog: str) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Update erfolgreich")
+        dialog.setObjectName("background")
+        dialog.setModal(True)
+        dialog.setMinimumSize(520, 360)
+        dialog.setStyleSheet(self._build_stylesheet(self._current_colors()))
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        header = QtWidgets.QLabel(f"Update erfolgreich – Version {version}")
+        header.setObjectName("cardTitle")
+        layout.addWidget(header)
+
+        text = QtWidgets.QTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText(changelog)
+        text.setObjectName("card")
+        layout.addWidget(text, 1)
+
+        close_btn = QtWidgets.QPushButton("Schließen")
+        close_btn.setObjectName("primaryButton")
+        close_btn.clicked.connect(dialog.accept)
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dialog.exec()
 
     @staticmethod
     def _parse_version(value: str) -> list[int]:
@@ -381,17 +413,53 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_update_prompt(info)
 
     def _show_update_prompt(self, info: dict) -> None:
-        msg = QtWidgets.QMessageBox(self)
-        msg.setWindowTitle("Update verfügbar")
-        msg.setText(f"Eine neue Suite-Version ist verfügbar: {info['version']}")
-        msg.setInformativeText("Möchtest du das Update jetzt herunterladen und installieren?")
-        msg.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
-        msg.setDefaultButton(QtWidgets.QMessageBox.Yes)
-        msg.button(QtWidgets.QMessageBox.Yes).setText("Update")
-        msg.button(QtWidgets.QMessageBox.No).setText("Später")
-        msg.setStyleSheet(self._build_stylesheet(self._current_colors()))
-        result = msg.exec()
-        if result == QtWidgets.QMessageBox.Yes:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Update verfügbar")
+        dialog.setObjectName("background")
+        dialog.setModal(True)
+        dialog.setMinimumSize(520, 260)
+        dialog.setStyleSheet(self._build_stylesheet(self._current_colors()))
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        header = QtWidgets.QLabel("Update verfügbar")
+        header.setObjectName("cardTitle")
+        layout.addWidget(header)
+
+        version_line = QtWidgets.QLabel(f"Neue Suite-Version: {info['version']}")
+        version_line.setObjectName("holderLabel")
+        layout.addWidget(version_line)
+
+        copy = QtWidgets.QLabel(
+            "Möchtest du das Update jetzt herunterladen und installieren?"
+        )
+        copy.setObjectName("holderLabel")
+        copy.setWordWrap(True)
+        layout.addWidget(copy)
+
+        if info.get("changelog"):
+            preview = QtWidgets.QLabel(info["changelog"])
+            preview.setObjectName("holderLabel")
+            preview.setWordWrap(True)
+            layout.addWidget(preview)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        later_btn = QtWidgets.QPushButton("Später")
+        later_btn.setObjectName("secondaryButton")
+        later_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        later_btn.clicked.connect(dialog.reject)
+        update_btn = QtWidgets.QPushButton("Update")
+        update_btn.setObjectName("primaryButton")
+        update_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        update_btn.clicked.connect(dialog.accept)
+        btn_row.addWidget(later_btn)
+        btn_row.addWidget(update_btn)
+        layout.addLayout(btn_row)
+
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
             self._start_update_download(info)
 
     def _start_update_download(self, info: dict) -> None:
@@ -475,15 +543,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     started = False
 
             if started:
-                prompt = QtWidgets.QMessageBox(self)
-                prompt.setWindowTitle("Update gestartet")
-                prompt.setText("Der Installer wurde gestartet. Soll Neuranel jetzt geschlossen werden?")
-                prompt.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
-                prompt.button(QtWidgets.QMessageBox.Yes).setText("Jetzt schließen")
-                prompt.button(QtWidgets.QMessageBox.No).setText("Später")
-                prompt.setStyleSheet(self._build_stylesheet(self._current_colors()))
-                if prompt.exec() == QtWidgets.QMessageBox.Yes:
-                    QtWidgets.QApplication.instance().quit()
+                QtWidgets.QApplication.instance().quit()
             else:
                 QtWidgets.QMessageBox.warning(
                     self,
