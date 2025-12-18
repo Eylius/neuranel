@@ -1,0 +1,37 @@
+Neuranel Non-Commercial License
+Version 1.0
+
+Copyright (c) 2025 Elias Seidner
+All rights reserved.
+
+1. Grant of License
+You are granted a non-exclusive, worldwide, royalty-free license to use,
+copy, modify, and distribute this software and its source code for
+non-commercial purposes only, subject to the terms of this license.
+
+2. Non-Commercial Use Only
+Commercial use is not permitted without prior written permission from the
+copyright holder. "Commercial use" includes, but is not limited to:
+selling, licensing, hosting as a paid service, embedding in a paid product
+or service, or using the software to generate revenue directly or indirectly.
+
+3. Attribution
+Any distribution of the software or derivative works must include this
+license text and retain all copyright notices.
+
+4. No Warranty
+This software is provided "as is", without warranty of any kind, express
+or implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose, and non-infringement. In no event shall
+the authors or copyright holders be liable for any claim, damages, or other
+liability, whether in an action of contract, tort, or otherwise, arising
+from, out of, or in connection with the software or the use or other
+dealings in the software.
+
+5. Termination
+Any violation of this license automatically terminates your rights under
+this license.
+
+6. Permission Requests
+For commercial licensing or other permissions, contact:
+elias.seidner@gmail.com
