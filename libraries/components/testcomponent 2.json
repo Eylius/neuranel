@@ -1,0 +1,40 @@
+{
+  "name": "testcomponent 2",
+  "nodes": [
+    {
+      "id": "b1",
+      "title": "eingang",
+      "type": "basic",
+      "allow_inputs": false,
+      "allow_outputs": true,
+      "inputs": 0,
+      "outputs": 1,
+      "input_labels": [],
+      "output_labels": [
+        "Output 1"
+      ],
+      "pos": [
+        80.0,
+        240.0
+      ]
+    },
+    {
+      "id": "b2",
+      "title": "eingang",
+      "type": "basic",
+      "allow_inputs": false,
+      "allow_outputs": true,
+      "inputs": 0,
+      "outputs": 1,
+      "input_labels": [],
+      "output_labels": [
+        "Output 1"
+      ],
+      "pos": [
+        80.0,
+        100.0
+      ]
+    }
+  ],
+  "connections": []
+}

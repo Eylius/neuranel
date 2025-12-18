@@ -1,0 +1,181 @@
+{
+  "name": "eingang",
+  "nodes": [
+    {
+      "id": "b1",
+      "title": "eingang",
+      "type": null,
+      "allow_inputs": false,
+      "allow_outputs": true,
+      "inputs": 0,
+      "outputs": 3,
+      "input_labels": [],
+      "output_labels": [
+        "Output 1",
+        "Output 2",
+        "Output 3"
+      ],
+      "pos": [
+        8.0,
+        77.0
+      ]
+    },
+    {
+      "id": "b2",
+      "title": "eingang",
+      "type": null,
+      "allow_inputs": false,
+      "allow_outputs": true,
+      "inputs": 0,
+      "outputs": 1,
+      "input_labels": [],
+      "output_labels": [
+        "Output 1"
+      ],
+      "pos": [
+        49.0,
+        442.0
+      ]
+    },
+    {
+      "id": "b3",
+      "title": "eingang",
+      "type": null,
+      "allow_inputs": false,
+      "allow_outputs": true,
+      "inputs": 0,
+      "outputs": 2,
+      "input_labels": [],
+      "output_labels": [
+        "Output 1",
+        "Output 2"
+      ],
+      "pos": [
+        29.0,
+        268.0
+      ]
+    },
+    {
+      "id": "b4",
+      "title": "ausgang",
+      "type": null,
+      "allow_inputs": true,
+      "allow_outputs": false,
+      "inputs": 3,
+      "outputs": 0,
+      "input_labels": [
+        "Input 1",
+        "Input 2",
+        "Input 3"
+      ],
+      "output_labels": [],
+      "pos": [
+        481.0,
+        154.0
+      ]
+    },
+    {
+      "id": "b5",
+      "title": "ausgang",
+      "type": null,
+      "allow_inputs": true,
+      "allow_outputs": false,
+      "inputs": 1,
+      "outputs": 0,
+      "input_labels": [
+        "Input 1"
+      ],
+      "output_labels": [],
+      "pos": [
+        499.0,
+        372.0
+      ]
+    },
+    {
+      "id": "b6",
+      "title": "ausgang",
+      "type": null,
+      "allow_inputs": true,
+      "allow_outputs": false,
+      "inputs": 1,
+      "outputs": 0,
+      "input_labels": [
+        "Input 1"
+      ],
+      "output_labels": [],
+      "pos": [
+        767.0,
+        23.0
+      ]
+    },
+    {
+      "id": "b7",
+      "title": "eingang",
+      "type": null,
+      "allow_inputs": false,
+      "allow_outputs": true,
+      "inputs": 0,
+      "outputs": 1,
+      "input_labels": [],
+      "output_labels": [
+        "Output 1"
+      ],
+      "pos": [
+        405.0,
+        54.0
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "node": "b2",
+        "output": 0
+      },
+      "to": {
+        "node": "b4",
+        "input": 0
+      }
+    },
+    {
+      "from": {
+        "node": "b1",
+        "output": 2
+      },
+      "to": {
+        "node": "b5",
+        "input": 0
+      }
+    },
+    {
+      "from": {
+        "node": "b3",
+        "output": 1
+      },
+      "to": {
+        "node": "b5",
+        "input": 0
+      }
+    },
+    {
+      "from": {
+        "node": "b3",
+        "output": 0
+      },
+      "to": {
+        "node": "b4",
+        "input": 0
+      }
+    },
+    {
+      "from": {
+        "node": "b1",
+        "output": 0
+      },
+      "to": {
+        "node": "b4",
+        "input": 0
+      }
+    }
+  ]
+}
