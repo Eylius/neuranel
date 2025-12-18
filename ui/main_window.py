@@ -4,6 +4,8 @@ import json
 import os
 import shutil
 import tempfile
+import urllib.error
+import urllib.request
 from datetime import datetime
 from getpass import getuser
 from pathlib import Path
@@ -64,6 +66,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_download_manager: QtNetwork.QNetworkAccessManager | None = None
         self._update_download_reply: QtNetwork.QNetworkReply | None = None
         self._update_progress: QtWidgets.QProgressDialog | None = None
+        self._update_checked = False
+        self._update_check_thread: QtCore.QThread | None = None
+        self._update_check_worker: UpdateCheckWorker | None = None
+        self._update_retry_count = 0
 
         self._ensure_config()
         # Sync theme after setup; setup may have updated config.
@@ -242,6 +248,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_nav_overlay", None) is not None:
             self._update_nav_overlay_geometry()
 
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        # Defer update check until the window is visible to avoid timing issues.
+        if not self._update_checked:
+            QtCore.QTimer.singleShot(500, self._check_for_updates)
+
     def _start_loans_poll(self) -> None:
         self._loans_poll_timer = QtCore.QTimer(self)
         self._loans_poll_timer.setInterval(5000)
@@ -316,28 +328,43 @@ class MainWindow(QtWidgets.QMainWindow):
         return right > left
 
     def _check_for_updates(self) -> None:
+        if self._update_checked:
+            return
+        self._update_checked = True
         if not self.UPDATE_URL:
             return
-        if self._update_check_manager is None:
-            self._update_check_manager = QtNetwork.QNetworkAccessManager(self)
-        req = QtNetwork.QNetworkRequest(QtCore.QUrl(self.UPDATE_URL))
-        req.setHeader(QtNetwork.QNetworkRequest.UserAgentHeader, "Neuranel-Updater")
-        reply = self._update_check_manager.get(req)
-        reply.finished.connect(lambda: self._handle_update_check(reply))
-
-    def _handle_update_check(self, reply: QtNetwork.QNetworkReply) -> None:
-        try:
-            if reply.error() != QtNetwork.QNetworkReply.NoError:
-                return
-            payload = bytes(reply.readAll()).decode("utf-8", errors="replace")
-            data = json.loads(payload)
-        except Exception:
+        if self._update_check_thread and self._update_check_thread.isRunning():
             return
-        finally:
-            reply.deleteLater()
+        thread = QtCore.QThread(self)
+        worker = UpdateCheckWorker(self.UPDATE_URL)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_update_check_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._update_check_thread = thread
+        self._update_check_worker = worker
+        thread.start()
 
+    def _handle_update_check_result(self, data: object, error: str) -> None:
+        if error:
+            short_error = error.strip().replace("\n", " ")
+            if len(short_error) > 120:
+                short_error = short_error[:117] + "..."
+            self._set_status(f"Updatecheck fehlgeschlagen: {short_error}")
+            if self._update_retry_count < 1:
+                self._update_retry_count += 1
+                self._update_checked = False
+                QtCore.QTimer.singleShot(8000, self._check_for_updates)
+            return
         if not isinstance(data, dict):
+            self._set_status("Updatecheck: ungueltige Antwort.")
             return
+        self._set_status("")
+        self._handle_update_payload(data)
+
+    def _handle_update_payload(self, data: dict) -> None:
         latest = str(data.get("suite_version") or "").strip()
         if not latest:
             return
@@ -3516,6 +3543,27 @@ class LineDraftItem(QtWidgets.QGraphicsPathItem):
         for p in pts[1:]:
             path.lineTo(p)
         self.setPath(path)
+
+
+class UpdateCheckWorker(QtCore.QObject):
+    finished = QtCore.Signal(object, str)
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            req = urllib.request.Request(
+                self._url,
+                headers={"User-Agent": "Neuranel-Updater"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as response:
+                payload = response.read().decode("utf-8-sig", errors="replace")
+            data = json.loads(payload)
+            self.finished.emit(data, "")
+        except Exception as exc:
+            self.finished.emit(None, str(exc))
 
 
 class NavListWidget(QtWidgets.QListWidget):
