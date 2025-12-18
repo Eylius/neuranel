@@ -433,7 +433,29 @@ class MainWindow(QtWidgets.QMainWindow):
                     self, "Update fehlgeschlagen", "Download fehlgeschlagen."
                 )
                 return
+            status_code = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
+            if isinstance(status_code, int) and status_code >= 400:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Update fehlgeschlagen",
+                    f"Download fehlgeschlagen (HTTP {status_code}).",
+                )
+                return
             data = bytes(reply.readAll())
+            if data.lstrip().startswith(b"<!DOCTYPE") or data.lstrip().startswith(b"<html"):
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Update fehlgeschlagen",
+                    "Download lieferte HTML statt einer EXE. Bitte pruefe die Release-URL.",
+                )
+                return
+            if len(data) < 50_000:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Update fehlgeschlagen",
+                    "Download ist zu klein und scheint ungueltig zu sein.",
+                )
+                return
             temp_dir = Path(tempfile.gettempdir())
             filename = f"NeuranelUpdate_{info['version']}.exe"
             target = temp_dir / filename
@@ -442,8 +464,32 @@ class MainWindow(QtWidgets.QMainWindow):
             self.config["pending_suite_version"] = info.get("version", "")
             self.config["pending_changelog"] = info.get("changelog", "")
             save_config(self.config)
-            QtCore.QProcess.startDetached(str(target))
-            QtWidgets.QApplication.instance().quit()
+
+            started = QtCore.QProcess.startDetached(str(target))
+            if not started:
+                try:
+                    if hasattr(os, "startfile"):
+                        os.startfile(str(target))
+                        started = True
+                except OSError:
+                    started = False
+
+            if started:
+                prompt = QtWidgets.QMessageBox(self)
+                prompt.setWindowTitle("Update gestartet")
+                prompt.setText("Der Installer wurde gestartet. Soll Neuranel jetzt geschlossen werden?")
+                prompt.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+                prompt.button(QtWidgets.QMessageBox.Yes).setText("Jetzt schließen")
+                prompt.button(QtWidgets.QMessageBox.No).setText("Später")
+                prompt.setStyleSheet(self._build_stylesheet(self._current_colors()))
+                if prompt.exec() == QtWidgets.QMessageBox.Yes:
+                    QtWidgets.QApplication.instance().quit()
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Update fehlgeschlagen",
+                    f"Installer konnte nicht gestartet werden.\nPfad: {target}",
+                )
         finally:
             reply.deleteLater()
 
