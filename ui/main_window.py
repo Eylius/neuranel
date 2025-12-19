@@ -52,6 +52,7 @@ class MainWindow(QtWidgets.QMainWindow):
             or self.config.get("accent_color2", DEFAULT_PRESETS["dark"]["accent2"])
         )
         self.loans: dict = {}
+        self.local_borrowed: dict = {}
         self._threads: list[QtCore.QThread] = []
         self._workers: list[MoveWorker] = []
         self._worker_context: dict[MoveWorker, dict] = {}
@@ -78,6 +79,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.theme = "dark"
         self._apply_config_paths()
         self.library_paths: list[str] = self._load_library_paths()
+        self._refresh_local_borrowed()
 
         central = QtWidgets.QWidget()
         central.setObjectName("background")
@@ -268,6 +270,7 @@ class MainWindow(QtWidgets.QMainWindow):
             new_loans = load_loans(self.loans_file)
         except Exception:
             return
+        self._refresh_local_borrowed()
         if new_loans == self._last_loans:
             return
         self.loans = new_loans
@@ -1117,6 +1120,94 @@ class MainWindow(QtWidgets.QMainWindow):
         backup_cfg = self.config.get("backup_dir")
         self.backup_dir = self._normalize_path(backup_cfg, BASE_DIR / "backups") if backup_cfg is not None else None
         self.loans_file = self.shared_dir / "neuranel_data" / "loans.json"
+        self.local_loans_file = self.local_dir / "neuranel_data" / "loans_local.json"
+
+    def _load_local_loan_config(self) -> tuple[dict, dict]:
+        default_data = {"borrowed_projects": {}}
+        target = getattr(self, "local_loans_file", None)
+        if target is None:
+            return default_data, default_data["borrowed_projects"]
+        path = target
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return default_data, default_data["borrowed_projects"]
+        if not path.exists():
+            try:
+                target.write_text(json.dumps(default_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
+            return {"borrowed_projects": {}}, {}
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+        borrowed = data.get("borrowed_projects")
+        if not isinstance(borrowed, dict):
+            borrowed = {}
+            data["borrowed_projects"] = borrowed
+        return data, borrowed
+
+    def _write_local_loan_config(self, data: dict) -> None:
+        path = getattr(self, "local_loans_file", None)
+        if path is None:
+            return
+        tmp = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(data, indent=2, ensure_ascii=False)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            return
+        finally:
+            if tmp:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+    def _refresh_local_borrowed(self, local_projects: list[str] | None = None) -> None:
+        data, borrowed = self._load_local_loan_config()
+        if not isinstance(borrowed, dict):
+            borrowed = {}
+            data["borrowed_projects"] = {}
+        if isinstance(local_projects, list):
+            local_list = [p for p in local_projects if isinstance(p, str) and p.lower() != "neuranel_data"]
+        else:
+            local_list = [name for name in list_projects(self.local_dir) if name.lower() != "neuranel_data"]
+        local_set = set(local_list)
+        pruned = {name: info for name, info in borrowed.items() if name in local_set}
+        if pruned != borrowed:
+            data["borrowed_projects"] = pruned
+            self._write_local_loan_config(data)
+        self.local_borrowed = pruned
+
+    def _update_local_borrow_record(self, name: str, timestamp: str, holder: str) -> None:
+        data, borrowed = self._load_local_loan_config()
+        if not isinstance(borrowed, dict):
+            borrowed = {}
+            data["borrowed_projects"] = borrowed
+        borrowed[name] = {"holder": holder, "timestamp": timestamp}
+        self._write_local_loan_config(data)
+        self.local_borrowed = borrowed
+
+    def _remove_local_borrow_record(self, name: str) -> None:
+        data, borrowed = self._load_local_loan_config()
+        if not isinstance(borrowed, dict):
+            borrowed = {}
+            data["borrowed_projects"] = borrowed
+        if name in borrowed:
+            del borrowed[name]
+            self._write_local_loan_config(data)
+        self.local_borrowed = borrowed
 
     def _ensure_config(self) -> None:
         if "libraries" not in self.config or not isinstance(self.config.get("libraries"), list):
@@ -1785,6 +1876,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.local_dir = new_local
         self.backup_dir = new_backup
         self.loans_file = self.shared_dir / "neuranel_data" / "loans.json"
+        self.local_loans_file = self.local_dir / "neuranel_data" / "loans_local.json"
         self.config["shared_dir"] = str(self.shared_dir)
         self.config["local_dir"] = str(self.local_dir)
         self.config["backup_dir"] = str(self.backup_dir) if self.backup_dir else ""
@@ -2301,7 +2393,8 @@ class MainWindow(QtWidgets.QMainWindow):
             new_shared = [
                 name for name in list_projects(self.shared_dir) if name.lower() != "neuranel_data"
             ]
-            new_local = list_projects(self.local_dir)
+            new_local = [name for name in list_projects(self.local_dir) if name.lower() != "neuranel_data"]
+            self._refresh_local_borrowed(new_local)
 
             if (
                 not force
@@ -2531,11 +2624,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.local_dir.mkdir(parents=True, exist_ok=True)
             self._copy_directory_with_progress(src, dst, progress_emit)
             try:
+                ts = datetime.now().isoformat(timespec="seconds")
                 self.loans[name] = {
                     "holder": current_user,
-                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "timestamp": ts,
                 }
                 save_loans(self.loans_file, self.loans)
+                self._update_local_borrow_record(name, ts, current_user)
             except Exception:
                 try:
                     shutil.rmtree(dst, onerror=_handle_remove_readonly)
@@ -2572,6 +2667,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if isinstance(self.loans, dict) and name in self.loans:
                 del self.loans[name]
             save_loans(self.loans_file, self.loans)
+            self._remove_local_borrow_record(name)
             shutil.rmtree(src, onerror=_handle_remove_readonly)
 
         self._run_move_task(
