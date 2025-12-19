@@ -2537,7 +2537,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.button.clicked.connect(lambda checked=False, n=name: self.delete_copy_only_project(n))
                 if getattr(widget, "extra_buttons", None):
                     widget.extra_buttons[0].clicked.connect(
-                        lambda checked=False, n=name: self.replace_copy_only_project(n)
+                        lambda checked=False, n=name, w=widget: self.replace_copy_only_project(n, w)
                     )
             else:
                 widget = ProjectItem(name, holder, timestamp, "Zurueckgeben", None)
@@ -2802,13 +2802,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self._remove_copy_only_record(name)
             self.refresh_lists(force=True)
             return
-        confirm = QtWidgets.QMessageBox.question(
-            self,
-            "Löschen",
-            f"{name} im local-Ordner löschen?",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-        )
-        if confirm != QtWidgets.QMessageBox.Yes:
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Löschen")
+        box.setText(f"{name} im local-Ordner löschen?")
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        box.setDefaultButton(QtWidgets.QMessageBox.No)
+        box.setStyleSheet(self._build_stylesheet(self._current_colors()))
+        box.setWindowModality(QtCore.Qt.WindowModal)
+        if box.exec() != QtWidgets.QMessageBox.Yes:
             return
         try:
             shutil.rmtree(src, onerror=_handle_remove_readonly)
@@ -2818,32 +2820,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self._remove_copy_only_record(name)
         self.refresh_lists(force=True)
 
-    def replace_copy_only_project(self, name: str) -> None:
+    def replace_copy_only_project(self, name: str, widget: ProjectItem | None = None) -> None:
         if self._busy:
             return
-        if not self._check_shared_connection(require_write=False):
+        if not self._check_shared_connection(require_write=True):
             return
-        src = self.shared_dir / name
-        dst = self.local_dir / name
+        src = self.local_dir / name
+        dst = self.shared_dir / name
         if not src.exists():
-            QtWidgets.QMessageBox.warning(self, "Fehlt", f"Projekt nicht gefunden: {src}")
+            QtWidgets.QMessageBox.warning(self, "Fehlt", f"Lokales Projekt nicht gefunden: {src}")
             return
-        if not dst.exists():
-            QtWidgets.QMessageBox.warning(self, "Fehlt", f"Lokales Projekt nicht gefunden: {dst}")
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Ersetzen")
+        box.setText(f"{name} im Shared-Ordner durch die lokale Version ersetzen?\nDie aktuelle Shared-Version wird überschrieben.")
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        box.setDefaultButton(QtWidgets.QMessageBox.No)
+        box.setStyleSheet(self._build_stylesheet(self._current_colors()))
+        box.setWindowModality(QtCore.Qt.WindowModal)
+        if box.exec() != QtWidgets.QMessageBox.Yes:
             return
 
         def work(progress_emit):
-            shutil.rmtree(dst, onerror=_handle_remove_readonly)
-            self.local_dir.mkdir(parents=True, exist_ok=True)
+            if dst.exists():
+                self._backup_shared_project(name, progress_emit)
+                shutil.rmtree(dst, onerror=_handle_remove_readonly)
+            self.shared_dir.mkdir(parents=True, exist_ok=True)
             self._copy_directory_with_progress(src, dst, progress_emit, "Ersetzen")
+            shutil.rmtree(src, onerror=_handle_remove_readonly)
             ts = datetime.now().isoformat(timespec="seconds")
             self._update_copy_only_record(name, ts)
 
         self._run_move_task(
-            None,
+            widget,
             "Ersetzen",
             work,
-            lambda: (self.refresh_lists(), self._set_status(f"{name} ersetzt")),
+            lambda: (self._remove_copy_only_record(name), self.refresh_lists(), self._set_status(f"{name} ersetzt")),
             "Fehler",
             "Ersetzen fehlgeschlagen",
         )
