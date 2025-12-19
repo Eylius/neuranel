@@ -59,6 +59,8 @@ class ProjectItem(QtWidgets.QWidget):
         *,
         enabled: bool = True,
         variant: str = "action",
+        extra_actions: list[dict] | None = None,
+        main_last: bool = False,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -71,6 +73,7 @@ class ProjectItem(QtWidgets.QWidget):
         self._variant = variant
         self._prev_button_text: str | None = None
         self._prev_button_style: str | None = None
+        self.extra_buttons: list[QtWidgets.QPushButton] = []
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
@@ -85,6 +88,7 @@ class ProjectItem(QtWidgets.QWidget):
             holder_label.setText(f"held by {holder}{date_info}")
         else:
             holder_label.setText("")
+        self.holder_label = holder_label
 
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setObjectName("holderLabel")
@@ -98,14 +102,45 @@ class ProjectItem(QtWidgets.QWidget):
         text_layout.addWidget(self.status_label)
 
         self.button = QtWidgets.QPushButton(action_label)
-        self.button.setObjectName("dangerButton" if variant == "danger" else "actionButton")
+        btn_obj = "dangerButton" if variant == "danger" else ("secondaryButton" if variant == "secondary" else "actionButton")
+        self.button.setObjectName(btn_obj)
         self.button.setCursor(QtCore.Qt.PointingHandCursor)
         self.button.setEnabled(enabled)
         if action_handler:
             self.button.clicked.connect(action_handler)
 
         layout.addLayout(text_layout, 1)
-        layout.addWidget(self.button)
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(6)
+
+        targets: list[tuple[str, str, bool, object]] = []
+        for extra in extra_actions or []:
+            label = extra.get("label")
+            handler = extra.get("handler")
+            variant_extra = extra.get("variant", "action")
+            enabled_extra = extra.get("enabled", True)
+            if not label:
+                continue
+            btn = QtWidgets.QPushButton(label)
+            btn.setCursor(QtCore.Qt.PointingHandCursor)
+            btn_obj_extra = "dangerButton" if variant_extra == "danger" else ("secondaryButton" if variant_extra == "secondary" else "actionButton")
+            btn.setObjectName(btn_obj_extra)
+            btn.setEnabled(enabled_extra)
+            if handler:
+                btn.clicked.connect(handler)
+            self.extra_buttons.append(btn)
+            targets.append((label, btn_obj_extra, enabled_extra, btn))
+
+        if main_last:
+            targets.append((action_label, btn_obj, enabled, self.button))
+        else:
+            targets.insert(0, (action_label, btn_obj, enabled, self.button))
+
+        for _, _, _, btn in targets:
+            btn_row.addWidget(btn)
+
+        layout.addLayout(btn_row)
 
     def show_loading(self, text: str) -> None:
         self._prev_button_text = self.button.text()

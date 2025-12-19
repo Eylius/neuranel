@@ -53,6 +53,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.loans: dict = {}
         self.local_borrowed: dict = {}
+        self.local_copied: dict = {}
         self._threads: list[QtCore.QThread] = []
         self._workers: list[MoveWorker] = []
         self._worker_context: dict[MoveWorker, dict] = {}
@@ -1122,22 +1123,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.loans_file = self.shared_dir / "neuranel_data" / "loans.json"
         self.local_loans_file = self.local_dir / "neuranel_data" / "loans_local.json"
 
-    def _load_local_loan_config(self) -> tuple[dict, dict]:
-        default_data = {"borrowed_projects": {}}
+    def _load_local_loan_config(self) -> tuple[dict, dict, dict]:
+        default_data = {"borrowed_projects": {}, "copy_only": {}}
         target = getattr(self, "local_loans_file", None)
         if target is None:
-            return default_data, default_data["borrowed_projects"]
+            return default_data, default_data["borrowed_projects"], default_data["copy_only"]
         path = target
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
         except OSError:
-            return default_data, default_data["borrowed_projects"]
+            return default_data, default_data["borrowed_projects"], default_data["copy_only"]
         if not path.exists():
             try:
                 target.write_text(json.dumps(default_data, indent=2, ensure_ascii=False), encoding="utf-8")
             except OSError:
                 pass
-            return {"borrowed_projects": {}}, {}
+            return {"borrowed_projects": {}, "copy_only": {}}, {}, {}
         try:
             with path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -1149,7 +1150,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not isinstance(borrowed, dict):
             borrowed = {}
             data["borrowed_projects"] = borrowed
-        return data, borrowed
+        copy_only = data.get("copy_only")
+        if not isinstance(copy_only, dict):
+            copy_only = {}
+            data["copy_only"] = copy_only
+        return data, borrowed, copy_only
 
     def _write_local_loan_config(self, data: dict) -> None:
         path = getattr(self, "local_loans_file", None)
@@ -1175,32 +1180,43 @@ class MainWindow(QtWidgets.QMainWindow):
                 except OSError:
                     pass
     def _refresh_local_borrowed(self, local_projects: list[str] | None = None) -> None:
-        data, borrowed = self._load_local_loan_config()
+        data, borrowed, copy_only = self._load_local_loan_config()
         if not isinstance(borrowed, dict):
             borrowed = {}
             data["borrowed_projects"] = {}
+        if not isinstance(copy_only, dict):
+            copy_only = {}
+            data["copy_only"] = {}
         if isinstance(local_projects, list):
             local_list = [p for p in local_projects if isinstance(p, str) and p.lower() != "neuranel_data"]
         else:
             local_list = [name for name in list_projects(self.local_dir) if name.lower() != "neuranel_data"]
         local_set = set(local_list)
         pruned = {name: info for name, info in borrowed.items() if name in local_set}
-        if pruned != borrowed:
+        pruned_copy = {name: info for name, info in copy_only.items() if name in local_set}
+        if pruned != borrowed or pruned_copy != copy_only:
             data["borrowed_projects"] = pruned
+            data["copy_only"] = pruned_copy
             self._write_local_loan_config(data)
         self.local_borrowed = pruned
+        self.local_copied = pruned_copy
 
     def _update_local_borrow_record(self, name: str, timestamp: str, holder: str) -> None:
-        data, borrowed = self._load_local_loan_config()
+        data, borrowed, copy_only = self._load_local_loan_config()
         if not isinstance(borrowed, dict):
             borrowed = {}
             data["borrowed_projects"] = borrowed
+        if not isinstance(copy_only, dict):
+            copy_only = {}
+            data["copy_only"] = copy_only
+        if name in copy_only:
+            copy_only.pop(name, None)
         borrowed[name] = {"holder": holder, "timestamp": timestamp}
         self._write_local_loan_config(data)
         self.local_borrowed = borrowed
 
     def _remove_local_borrow_record(self, name: str) -> None:
-        data, borrowed = self._load_local_loan_config()
+        data, borrowed, copy_only = self._load_local_loan_config()
         if not isinstance(borrowed, dict):
             borrowed = {}
             data["borrowed_projects"] = borrowed
@@ -1208,6 +1224,27 @@ class MainWindow(QtWidgets.QMainWindow):
             del borrowed[name]
             self._write_local_loan_config(data)
         self.local_borrowed = borrowed
+
+    def _update_copy_only_record(self, name: str, timestamp: str) -> None:
+        data, borrowed, copy_only = self._load_local_loan_config()
+        if not isinstance(copy_only, dict):
+            copy_only = {}
+            data["copy_only"] = copy_only
+        if name in borrowed:
+            borrowed.pop(name, None)
+        copy_only[name] = {"timestamp": timestamp}
+        self._write_local_loan_config(data)
+        self.local_copied = copy_only
+
+    def _remove_copy_only_record(self, name: str) -> None:
+        data, borrowed, copy_only = self._load_local_loan_config()
+        if not isinstance(copy_only, dict):
+            copy_only = {}
+            data["copy_only"] = copy_only
+        if name in copy_only:
+            del copy_only[name]
+            self._write_local_loan_config(data)
+        self.local_copied = copy_only
 
     def _ensure_config(self) -> None:
         if "libraries" not in self.config or not isinstance(self.config.get("libraries"), list):
@@ -2443,13 +2480,33 @@ class MainWindow(QtWidgets.QMainWindow):
             btn_text = "n.A." if is_borrowed else "Ausleihen"
             variant = "danger" if is_borrowed else "action"
             enabled = not is_borrowed
-            widget = ProjectItem(name, holder, timestamp, btn_text, None, enabled=enabled, variant=variant)
+            extra_actions = [
+                {
+                    "label": "Nur kopieren",
+                    "handler": None,
+                    "variant": "secondary",
+                    "enabled": True,
+                }
+            ]
+            widget = ProjectItem(
+                name,
+                holder,
+                timestamp,
+                btn_text,
+                None,
+                enabled=enabled,
+                variant=variant,
+                extra_actions=extra_actions,
+                main_last=True,
+            )
             item = QtWidgets.QListWidgetItem(lw)
             item.setSizeHint(widget.sizeHint())
             lw.addItem(item)
             lw.setItemWidget(item, widget)
             if not is_borrowed:
                 widget.button.clicked.connect(lambda checked=False, n=name, w=widget: self.borrow_project(n, w))
+            if getattr(widget, "extra_buttons", None):
+                widget.extra_buttons[0].clicked.connect(lambda checked=False, n=name, w=widget: self.copy_project_only(n, w))
 
     def _fill_local(self, items: list[str]) -> None:
         lw = self.local_view.list_widget
@@ -2458,12 +2515,37 @@ class MainWindow(QtWidgets.QMainWindow):
             loan_info = self.loans.get(name, {}) if isinstance(self.loans, dict) else {}
             holder = loan_info.get("holder") if isinstance(loan_info, dict) else None
             timestamp = loan_info.get("timestamp") if isinstance(loan_info, dict) else None
-            widget = ProjectItem(name, holder, timestamp, "Zurueckgeben", None)
+            if name in self.local_copied:
+                copy_info = self.local_copied.get(name) or {}
+                copy_ts = copy_info.get("timestamp") if isinstance(copy_info, dict) else None
+                widget = ProjectItem(
+                    name,
+                    None,
+                    copy_ts,
+                    "Löschen",
+                    None,
+                    variant="danger",
+                    extra_actions=[
+                        {
+                            "label": "Ersetzen",
+                            "handler": None,
+                            "variant": "secondary",
+                        }
+                    ],
+                )
+                widget.holder_label.setText(f"Nur kopiert - {copy_ts}" if copy_ts else "Nur kopiert")
+                widget.button.clicked.connect(lambda checked=False, n=name: self.delete_copy_only_project(n))
+                if getattr(widget, "extra_buttons", None):
+                    widget.extra_buttons[0].clicked.connect(
+                        lambda checked=False, n=name: self.replace_copy_only_project(n)
+                    )
+            else:
+                widget = ProjectItem(name, holder, timestamp, "Zurueckgeben", None)
+                widget.button.clicked.connect(lambda checked=False, n=name, w=widget: self.return_project(n, w))
             item = QtWidgets.QListWidgetItem(lw)
             item.setSizeHint(widget.sizeHint())
             lw.addItem(item)
             lw.setItemWidget(item, widget)
-            widget.button.clicked.connect(lambda checked=False, n=name, w=widget: self.return_project(n, w))
 
     def _apply_shared_filter(self) -> None:
         term = self.shared_view.search_edit.text().strip().lower()
@@ -2647,6 +2729,39 @@ class MainWindow(QtWidgets.QMainWindow):
             "Kopieren fehlgeschlagen",
         )
 
+    def copy_project_only(self, name: str, widget: ProjectItem | None = None) -> None:
+        if self._busy:
+            return
+        if not self._check_shared_connection(require_write=False):
+            return
+        src = self.shared_dir / name
+        dst = self.local_dir / name
+        if not src.exists():
+            QtWidgets.QMessageBox.warning(self, "Fehlt", f"Projekt nicht gefunden: {src}")
+            return
+        if dst.exists():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Bereits vorhanden",
+                f"Im local-Ordner existiert bereits {name}. Bitte 'Ersetzen' verwenden oder zuerst löschen.",
+            )
+            return
+
+        def work(progress_emit):
+            self.local_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_directory_with_progress(src, dst, progress_emit, "Kopie")
+            ts = datetime.now().isoformat(timespec="seconds")
+            self._update_copy_only_record(name, ts)
+
+        self._run_move_task(
+            widget,
+            "Kopiere",
+            work,
+            self.refresh_lists,
+            "Fehler",
+            "Kopieren fehlgeschlagen",
+        )
+
     def return_project(self, name: str, widget: ProjectItem | None = None) -> None:
         if self._busy:
             return
@@ -2677,6 +2792,60 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_lists,
             "Fehler",
             "Zurueckgeben fehlgeschlagen",
+        )
+
+    def delete_copy_only_project(self, name: str) -> None:
+        if self._busy:
+            return
+        src = self.local_dir / name
+        if not src.exists():
+            self._remove_copy_only_record(name)
+            self.refresh_lists(force=True)
+            return
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Löschen",
+            f"{name} im local-Ordner löschen?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+        try:
+            shutil.rmtree(src, onerror=_handle_remove_readonly)
+        except Exception as exc:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(self, "Fehler", f"Löschen fehlgeschlagen: {exc}")
+            return
+        self._remove_copy_only_record(name)
+        self.refresh_lists(force=True)
+
+    def replace_copy_only_project(self, name: str) -> None:
+        if self._busy:
+            return
+        if not self._check_shared_connection(require_write=False):
+            return
+        src = self.shared_dir / name
+        dst = self.local_dir / name
+        if not src.exists():
+            QtWidgets.QMessageBox.warning(self, "Fehlt", f"Projekt nicht gefunden: {src}")
+            return
+        if not dst.exists():
+            QtWidgets.QMessageBox.warning(self, "Fehlt", f"Lokales Projekt nicht gefunden: {dst}")
+            return
+
+        def work(progress_emit):
+            shutil.rmtree(dst, onerror=_handle_remove_readonly)
+            self.local_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_directory_with_progress(src, dst, progress_emit, "Ersetzen")
+            ts = datetime.now().isoformat(timespec="seconds")
+            self._update_copy_only_record(name, ts)
+
+        self._run_move_task(
+            None,
+            "Ersetzen",
+            work,
+            lambda: (self.refresh_lists(), self._set_status(f"{name} ersetzt")),
+            "Fehler",
+            "Ersetzen fehlgeschlagen",
         )
 
     def _backup_shared_project(self, name: str, progress_emit=None) -> None:
@@ -2733,12 +2902,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget = lw.itemWidget(lw.item(i))
                 if not isinstance(widget, ProjectItem):
                     continue
-                if not enabled:
-                    widget.button.setEnabled(False)
-                else:
-                    widget.button.setEnabled(
-                        (not widget._static_disabled) and widget.status_label.text().strip() == ""
-                    )
+                allow = enabled and widget.status_label.text().strip() == ""
+                widget.button.setEnabled(allow and not widget._static_disabled)
+                for btn in getattr(widget, "extra_buttons", []):
+                    btn.setEnabled(allow)
 
 
 class NodeEditorWidget(QtWidgets.QWidget):
