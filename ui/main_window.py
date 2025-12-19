@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets, QtNetwork
 
 from config import BASE_DIR, DEFAULT_PRESETS, PROJECT_MANAGER_VERSION, SUITE_VERSION, load_config, save_config
-from storage import list_projects, load_loans, save_loans
+from storage import _try_set_hidden, list_projects, load_loans, save_loans
 from workers import MoveWorker, _handle_remove_readonly
 from ui.dialogs import SetupDialog
 from ui.widgets import ProjectCard, ProjectItem, TitleBar
@@ -1131,11 +1131,13 @@ class MainWindow(QtWidgets.QMainWindow):
         path = target
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            _try_set_hidden(path.parent)
         except OSError:
             return default_data, default_data["borrowed_projects"], default_data["copy_only"]
         if not path.exists():
             try:
                 target.write_text(json.dumps(default_data, indent=2, ensure_ascii=False), encoding="utf-8")
+                _try_set_hidden(target)
             except OSError:
                 pass
             return {"borrowed_projects": {}, "copy_only": {}}, {}, {}
@@ -1163,6 +1165,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tmp = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            _try_set_hidden(path.parent)
             payload = json.dumps(data, indent=2, ensure_ascii=False)
             tmp = path.with_suffix(path.suffix + ".tmp")
             try:
@@ -1171,6 +1174,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
             tmp.write_text(payload, encoding="utf-8")
             os.replace(tmp, path)
+            _try_set_hidden(path)
         except OSError:
             return
         finally:

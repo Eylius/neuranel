@@ -52,6 +52,7 @@ def _try_set_hidden(path: Path) -> None:
 
 def save_loans(loans_file: Path, loans: dict) -> None:
     loans_file.parent.mkdir(parents=True, exist_ok=True)
+    _try_set_hidden(loans_file.parent)
     target = loans_file
     hidden_variant = loans_file.with_name("." + loans_file.name)
     underscore_variant = loans_file.with_name("_" + loans_file.name)
